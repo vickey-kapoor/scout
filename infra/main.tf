@@ -103,7 +103,8 @@ resource "google_cloud_run_v2_service" "scout" {
           cpu    = "1"
           memory = "512Mi"
         }
-        cpu_idle = true # only billed for CPU while handling requests
+        cpu_idle          = true # only billed for CPU while handling requests
+        startup_cpu_boost = true # extra CPU during cold start; imports are slow on 1 vCPU
       }
 
       dynamic "env" {
@@ -119,7 +120,14 @@ resource "google_cloud_run_v2_service" "scout" {
         }
       }
 
+      # Cold start takes ~13s+ (Python imports on a throttled vCPU). The default
+      # probe (3 checks x 10s) left almost no margin and cold starts began failing.
+      # This allows up to 5 + 24 x 5 = ~125s before the instance is marked failed.
       startup_probe {
+        initial_delay_seconds = 5
+        period_seconds        = 5
+        timeout_seconds       = 3
+        failure_threshold     = 24
         http_get {
           path = "/"
         }
