@@ -1,0 +1,6 @@
+anthropic
+python-dotenv
+pydantic
+tavily-python
+httpx
+beautifulsoup4
