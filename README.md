@@ -30,14 +30,18 @@ That loop is `agent.py`. Everything else — LangGraph, CrewAI, the Claude Agent
 ```
 scout/
 ├── .env              # API keys (gitignored, never committed)
+├── .env.example      # placeholder keys — copy to .env
 ├── .gitignore
+├── .dockerignore     # keeps .env and local files out of the image
+├── Dockerfile        # container for Cloud Run
 ├── requirements.txt
 ├── 01_hello_llm.py   # lesson 1: one API call
 ├── 01b_chat_loop.py  # lesson 1b: multi-turn chat
-├── main.py           # entry point (not wired up yet — run agent.py for now)
+├── main.py           # HTTP API (FastAPI): POST /ask
 ├── agent.py          # the loop: model → tool_use? → run tool → repeat
 ├── tools.py          # tool functions + registry; TOOLS schema is generated
 ├── models.py         # Pydantic models: validate tool inputs, generate schemas
+├── trace.py          # writes each run to traces/<run_id>.jsonl
 └── README.md
 ```
 
@@ -46,6 +50,8 @@ scout/
 | `agent.py` | Decision loop, system prompt, `MAX_STEPS` guardrail, error feedback to the model |
 | `tools.py` | What the agent can *do*. Add a tool = one function + one registry line |
 | `models.py` | The shape of each tool's input. Pydantic validates at the door and builds the JSON schema the model reads |
+| `main.py` | HTTP wrapper around `agent.run()` for deployment |
+| `trace.py` | Logs every model call and tool call (tokens, timings, results) as JSON lines |
 
 ## Tools
 
@@ -65,18 +71,44 @@ python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\act
 pip install -r requirements.txt
 ```
 
-Create `.env`:
+Copy `.env.example` to `.env` and fill in your keys:
 
 ```
 ANTHROPIC_API_KEY=sk-ant-...
 TAVILY_API_KEY=tvly-...
 ```
 
-Run:
+Run in the terminal:
 
 ```bash
 python agent.py
 ```
+
+Or run as an HTTP API:
+
+```bash
+uvicorn main:app --reload
+# open http://localhost:8000/docs to try it in the browser, or:
+curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
+     -d '{"question": "Who created Python?"}'
+```
+
+| Endpoint | Purpose |
+|---|---|
+| `GET /` | Health check → `{"status": "ok"}` |
+| `POST /ask` | `{"question": "..."}` → `{"answer": "..."}` |
+| `GET /docs` | Interactive API docs |
+
+## Docker / Cloud Run
+
+```bash
+docker build -t scout .
+docker run --rm -p 8080:8080 --env-file .env scout
+```
+
+The image never contains `.env`. On Cloud Run, supply the keys from Secret Manager, e.g.
+`gcloud run deploy scout --source . --set-secrets ANTHROPIC_API_KEY=anthropic-key:latest,TAVILY_API_KEY=tavily-key:latest --no-allow-unauthenticated`.
+Note: `traces/` lives on the container's temporary disk and is lost on restart.
 
 ## How it works, in a little more detail
 

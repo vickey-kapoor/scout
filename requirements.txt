@@ -4,3 +4,5 @@ pydantic
 tavily-python
 httpx
 beautifulsoup4
+fastapi
+uvicorn
