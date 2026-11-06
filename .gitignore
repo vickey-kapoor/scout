@@ -5,6 +5,9 @@
 *.key
 *.pem
 
+# Agent run logs
+traces/
+
 # Python
 .venv/
 __pycache__/
