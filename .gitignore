@@ -5,6 +5,14 @@
 *.key
 *.pem
 
+# Terraform — state can contain secrets; tfvars has your project settings
+.terraform/
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+crash.log
+
 # Agent run logs
 traces/
 

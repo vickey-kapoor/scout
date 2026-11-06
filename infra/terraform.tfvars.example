@@ -1,0 +1,9 @@
+# Copy to terraform.tfvars (gitignored) and edit.
+project_id = "your-gcp-project-id"
+region     = "us-central1"
+
+# Who can call the API. Leave empty to keep it locked down.
+invoker_members = ["user:you@example.com"]
+
+# image_tag     = "latest"
+# max_instances = 2
