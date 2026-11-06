@@ -106,8 +106,9 @@ docker build -t scout .
 docker run --rm -p 8080:8080 --env-file .env scout
 ```
 
-The image never contains `.env`. On Cloud Run, supply the keys from Secret Manager, e.g.
-`gcloud run deploy scout --source . --set-secrets ANTHROPIC_API_KEY=anthropic-key:latest,TAVILY_API_KEY=tavily-key:latest --no-allow-unauthenticated`.
+The image never contains `.env`. On Cloud Run the keys come from Secret Manager
+(`scout-anthropic-api-key`, `scout-tavily-api-key`). The service is deployed with Terraform;
+see [`infra/README.md`](infra/README.md) for the full steps.
 Note: `traces/` lives on the container's temporary disk and is lost on restart.
 
 ## How it works, in a little more detail
