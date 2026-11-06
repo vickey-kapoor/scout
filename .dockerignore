@@ -1,0 +1,11 @@
+# Secrets — keys come from Secret Manager / env vars, never the image
+.env
+.env.*
+
+# Local-only
+.venv/
+traces/
+__pycache__/
+*.pyc
+.git/
+.gitignore
