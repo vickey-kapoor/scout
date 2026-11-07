@@ -55,10 +55,20 @@ def _search(table: str, columns: tuple[str, ...], text_cols: tuple[str, str],
     pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, words)) + r")\b", re.IGNORECASE)
     like = " OR ".join(f"{c} LIKE ?" for _ in words for c in text_cols)
     params = [f"%{w}%" for w in words for _ in text_cols]
-    rows = _run(f"SELECT {', '.join(columns + text_cols)} FROM {table} WHERE {like} "
-                "ORDER BY ts DESC", tuple(params))
-    hits = [r for r in rows if any(pattern.search(t or "") for t in r[len(columns):])]
-    return hits[:limit]
+    sql = f"SELECT {', '.join(columns + text_cols)} FROM {table} WHERE {like} ORDER BY ts DESC"
+    hits = []
+    conn = _conn()
+    try:
+        # the cursor streams rows newest-first: stop as soon as `limit` whole-word matches
+        # are found instead of loading every candidate into memory
+        for row in conn.execute(sql, tuple(params)):
+            if any(pattern.search(t or "") for t in row[len(columns):]):
+                hits.append(row)
+                if len(hits) == limit:
+                    break
+    finally:
+        conn.close()
+    return hits
 
 
 def recall(query: str, limit: int = 5) -> str:
