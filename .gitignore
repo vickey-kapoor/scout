@@ -20,3 +20,6 @@ traces/
 .venv/
 __pycache__/
 *.pyc
+
+# Agent memory (SQLite)
+memory.db

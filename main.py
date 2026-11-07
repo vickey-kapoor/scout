@@ -3,6 +3,7 @@
 # Local:  uvicorn main:app --reload   then open http://localhost:8000/docs
 
 import importlib
+import os
 import threading
 from contextlib import asynccontextmanager
 
@@ -20,6 +21,10 @@ async def lifespan(app: FastAPI):
     threading.Thread(target=importlib.import_module, args=("agent",), daemon=True).start()
     yield
 
+
+# Memory is shared by everyone who can call the API (no per-caller scoping yet), so one
+# caller's research could surface in another's answer. Off over HTTP unless opted in.
+MEMORY_OVER_HTTP = os.environ.get("SCOUT_MEMORY_HTTP") == "1"
 
 app = FastAPI(
     title="scout",
@@ -46,4 +51,4 @@ def ask(req: AskRequest) -> AskResponse:
     # plain `def` (not async): run() blocks, so FastAPI runs it in a worker thread
     from agent import run
 
-    return AskResponse(answer=run(req.question))
+    return AskResponse(answer=run(req.question, use_memory=MEMORY_OVER_HTTP))

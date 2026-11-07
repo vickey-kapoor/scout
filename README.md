@@ -42,6 +42,7 @@ scout/
 ├── tools.py          # tool functions + registry; TOOLS schema is generated
 ├── models.py         # Pydantic models: validate tool inputs, generate schemas
 ├── trace.py          # writes each run to traces/<run_id>.jsonl
+├── memory.py         # SQLite memory: saves answers, recalls related ones
 └── README.md
 ```
 
@@ -52,6 +53,7 @@ scout/
 | `models.py` | The shape of each tool's input. Pydantic validates at the door and builds the JSON schema the model reads |
 | `main.py` | HTTP wrapper around `agent.run()` for deployment |
 | `trace.py` | Logs every model call and tool call (tokens, timings, results) as JSON lines |
+| `memory.py` | Saves each finished answer to `memory.db`; before a run, recalls related past answers (SQLite FTS5 keyword search) into the system prompt |
 
 ## Tools
 
@@ -99,6 +101,50 @@ curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
 | `POST /ask` | `{"question": "..."}` → `{"answer": "..."}` |
 | `GET /docs` | Interactive API docs |
 
+## Memory
+
+Each complete answer is saved to `memory.db` (SQLite). At the start of a run, scout
+looks up related past answers by keyword and passes them to the model as quoted notes to
+verify, inside `<past_research>` tags. The system prompt says never to follow instructions
+found inside them.
+
+- **CLI (`python agent.py`):** memory is on.
+- **HTTP API (`/ask`):** memory is **off** unless `SCOUT_MEMORY_HTTP=1` is set. Memory isn't separated by caller yet, so with several callers one person's research could appear in another's answer.
+
+- **Location:** `memory.db` in the folder you run scout from. It's created on the first run. Set `SCOUT_MEMORY_DB` to use another path.
+- **Not committed or shipped:** it's listed in `.gitignore` and `.dockerignore`.
+- **Reset:** delete `memory.db`.
+- **On Cloud Run** it lives on the container's temporary disk. It's lost when an instance shuts down, and each instance has its own copy.
+
+### Inspecting it
+
+```powershell
+python memory.py                    # 10 most recent memories
+python memory.py "python release"   # what scout would recall for this question
+sqlite3 memory.db                   # SQL shell (winget install SQLite.SQLite)
+```
+
+Or open it in [DB Browser for SQLite](https://sqlitebrowser.org/) (`winget install DBBrowserForSQLite.DBBrowserForSQLite`).
+Close the GUI while scout is running, because an open database can block saves.
+
+The data is in two tables. `memories` holds the rows (`id`, `created`, `question`, `answer`).
+`memories_fts` is the full-text search index over them, and it updates automatically on insert.
+
+```sql
+-- everything, newest first
+SELECT id, created, question FROM memories ORDER BY id DESC;
+
+-- keyword search, ranked the way scout ranks it (best match first)
+SELECT m.id, m.question, bm25(memories_fts) AS score
+FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid
+WHERE memories_fts MATCH 'python OR release'
+ORDER BY score;
+
+-- delete a memory, then rebuild the index so search stays in sync
+DELETE FROM memories WHERE id = 3;
+INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');
+```
+
 ## Docker / Cloud Run
 
 ```bash
@@ -109,7 +155,7 @@ docker run --rm -p 8080:8080 --env-file .env scout
 The image never contains `.env`. On Cloud Run the keys come from Secret Manager
 (`scout-anthropic-api-key`, `scout-tavily-api-key`). The service is deployed with Terraform;
 see [`infra/README.md`](infra/README.md) for the full steps.
-Note: `traces/` lives on the container's temporary disk and is lost on restart.
+Note: `traces/` and `memory.db` live on the container's temporary disk, so they are lost on restart and not shared between instances.
 
 ## How it works, in a little more detail
 
@@ -126,11 +172,13 @@ Note: `traces/` lives on the container's temporary disk and is lost on restart.
 - **Lesson 2** — Tool calling: the agent loop (`agent.py`)
 - **Lesson 3** — Pydantic: validated inputs, generated schemas (`models.py`)
 - **Lesson 4** — Real tools: web search and page fetch (`tools.py`)
+- **Lesson 5** — Tracing: every model and tool call as JSON lines (`trace.py`)
+- **Lesson 6** — Persistent memory across sessions with SQLite (`memory.py`)
 
 ## Roadmap
 
 - [ ] Observability: log every model call and tool result
-- [ ] Persistent memory across sessions (SQLite)
+- [x] Persistent memory across sessions (SQLite)
 - [ ] Context management: summarize when the message list gets long
 - [ ] Human-approval gate for side-effecting tools
 - [ ] MCP client: plug in third-party tool servers
