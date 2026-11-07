@@ -6,6 +6,7 @@ from dotenv import load_dotenv
 import anthropic
 from anthropic.types import MessageParam
 from trace import Trace
+import memory
 
 load_dotenv()
 from tools import TOOLS, REGISTRY
@@ -18,13 +19,16 @@ MAX_STEPS = 10   # guardrail: never loop forever
 
 def run(question: str) -> str:
     trace = Trace(question)
+    past = memory.recall(question)           # earlier runs that share keywords
+    trace.log("memory_recall", ids=[m.id for m in past])
+    system = SYSTEM + ("\n\n" + memory.as_prompt(past) if past else "")
     messages: list[MessageParam] = [{"role": "user", "content": question}]
 
     for step in range(MAX_STEPS):
         response = client.messages.create(
             model="claude-sonnet-5-5",
             max_tokens=1000,
-            system=SYSTEM,
+            system=system,
             tools=TOOLS,
             messages=messages,
         )
@@ -37,6 +41,7 @@ def run(question: str) -> str:
         if response.stop_reason != "tool_use":
             answer = "".join(b.text for b in response.content if b.type == "text")
             trace.finish(answer)
+            memory.save(question, answer)    # only finished answers, not MAX_STEPS stops
             return answer
 
         # otherwise run every tool the model asked for
