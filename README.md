@@ -103,8 +103,13 @@ curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
 
 ## Memory
 
-Each finished answer is saved to `memory.db` (SQLite). At the start of a run, scout
-looks up related past answers by keyword and adds them to the system prompt as notes to verify.
+Each complete answer is saved to `memory.db` (SQLite). At the start of a run, scout
+looks up related past answers by keyword and passes them to the model as quoted notes to
+verify, inside `<past_research>` tags. The system prompt says never to follow instructions
+found inside them.
+
+- **CLI (`python agent.py`):** memory is on.
+- **HTTP API (`/ask`):** memory is **off** unless `SCOUT_MEMORY_HTTP=1` is set. Memory isn't separated by caller yet, so with several callers one person's research could appear in another's answer.
 
 - **Location:** `memory.db` in the folder you run scout from. It's created on the first run. Set `SCOUT_MEMORY_DB` to use another path.
 - **Not committed or shipped:** it's listed in `.gitignore` and `.dockerignore`.
