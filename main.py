@@ -23,8 +23,11 @@ async def lifespan(app: FastAPI):
 
 
 # Memory is shared by everyone who can call the API (no per-caller scoping yet), so one
-# caller's research could surface in another's answer. Off over HTTP unless opted in.
-MEMORY_OVER_HTTP = os.environ.get("SCOUT_MEMORY_HTTP") == "1"
+# caller's research could surface in another's answer. Off over HTTP unless opted in
+# with SCOUT_MEMORY_HTTP=1. Read per request (below), after `agent` has run
+# load_dotenv(), so the setting also works when it comes from .env.
+def memory_over_http() -> bool:
+    return os.environ.get("SCOUT_MEMORY_HTTP") == "1"
 
 app = FastAPI(
     title="scout",
@@ -51,4 +54,4 @@ def ask(req: AskRequest) -> AskResponse:
     # plain `def` (not async): run() blocks, so FastAPI runs it in a worker thread
     from agent import run
 
-    return AskResponse(answer=run(req.question, use_memory=MEMORY_OVER_HTTP))
+    return AskResponse(answer=run(req.question, use_memory=memory_over_http()))
