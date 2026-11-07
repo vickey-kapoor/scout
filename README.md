@@ -101,6 +101,45 @@ curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
 | `POST /ask` | `{"question": "..."}` → `{"answer": "..."}` |
 | `GET /docs` | Interactive API docs |
 
+## Memory
+
+Each finished answer is saved to `memory.db` (SQLite). At the start of a run, scout
+looks up related past answers by keyword and adds them to the system prompt as notes to verify.
+
+- **Location:** `memory.db` in the folder you run scout from. It's created on the first run. Set `SCOUT_MEMORY_DB` to use another path.
+- **Not committed or shipped:** it's listed in `.gitignore` and `.dockerignore`.
+- **Reset:** delete `memory.db`.
+- **On Cloud Run** it lives on the container's temporary disk. It's lost when an instance shuts down, and each instance has its own copy.
+
+### Inspecting it
+
+```powershell
+python memory.py                    # 10 most recent memories
+python memory.py "python release"   # what scout would recall for this question
+sqlite3 memory.db                   # SQL shell (winget install SQLite.SQLite)
+```
+
+Or open it in [DB Browser for SQLite](https://sqlitebrowser.org/) (`winget install DBBrowserForSQLite.DBBrowserForSQLite`).
+Close the GUI while scout is running, because an open database can block saves.
+
+The data is in two tables. `memories` holds the rows (`id`, `created`, `question`, `answer`).
+`memories_fts` is the full-text search index over them, and it updates automatically on insert.
+
+```sql
+-- everything, newest first
+SELECT id, created, question FROM memories ORDER BY id DESC;
+
+-- keyword search, ranked the way scout ranks it (best match first)
+SELECT m.id, m.question, bm25(memories_fts) AS score
+FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid
+WHERE memories_fts MATCH 'python OR release'
+ORDER BY score;
+
+-- delete a memory, then rebuild the index so search stays in sync
+DELETE FROM memories WHERE id = 3;
+INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');
+```
+
 ## Docker / Cloud Run
 
 ```bash
