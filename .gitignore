@@ -25,3 +25,7 @@ __pycache__/
 scout.db
 # old memory file from the first memory version
 memory.db
+
+# Saved Terraform plans (can contain sensitive values)
+tfplan
+*.tfplan

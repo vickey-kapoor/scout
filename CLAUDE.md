@@ -22,8 +22,10 @@ Keys come from `.env` (`ANTHROPIC_API_KEY`, `TAVILY_API_KEY`); see `.env.example
 
 There's **no test suite or linter**. Verify changes with throwaway scripts against a temp database, so the real `scout.db` is untouched:
 
-```bash
-SCOUT_MEMORY_DB="$TEMP/test.db" .venv/Scripts/python.exe -c "import agent; print(agent.run('...'))"
+```powershell
+$env:SCOUT_MEMORY_DB = "$env:TEMP\scout-test.db"
+.venv\Scripts\python.exe -c "import agent; print(agent.run('...'))"
+Remove-Item $env:SCOUT_MEMORY_DB; Remove-Item Env:SCOUT_MEMORY_DB
 ```
 
 To test `/ask` without calling the model, use FastAPI `TestClient` and mock `agent.run`. Real `agent.run` calls cost API tokens, so keep them few.
@@ -57,11 +59,14 @@ To test `/ask` without calling the model, use FastAPI `TestClient` and mock `age
 `infra/README.md` has the full steps. Key facts:
 - Private Cloud Run service `scout` (project `propane-cubist-479515-c5`, `us-central1`), invoked with `gcloud auth print-identity-token`. State is local (`infra/terraform.tfstate`, gitignored).
 - Secrets: `scout-anthropic-api-key` and `scout-tavily-api-key` in Secret Manager.
-- Deploy a new version with a **unique image tag** (the `:latest` tag makes Terraform see no change). Put `image_tag` in `infra/terraform.tfvars` so a plain `apply` doesn't revert it:
+- Deploy a new version with a **unique image tag**, the short git SHA. With `:latest`, Terraform sees no change. `infra/terraform.tfvars` pins the deployed tag (`image_tag = "..."`), so `terraform output image` ends in the *current* tag; replace whatever tag is there:
   ```powershell
   $tag = git rev-parse --short HEAD
-  gcloud builds submit --tag ((terraform -chdir=infra output -raw image) -replace ':latest$', ":$tag") .
-  terraform -chdir=infra apply -var "image_tag=$tag"
+  $image = (terraform -chdir=infra output -raw image) -replace ':[^:]+$', ":$tag"
+  gcloud builds submit --tag $image .
+  # then set image_tag = "<tag>" in infra/terraform.tfvars, so later plain applies keep it
+  terraform -chdir=infra plan -out=tfplan
+  terraform -chdir=infra apply tfplan
   ```
 - Don't change the service in the Cloud Console. It creates drift from the Terraform config (a Console edit caused a failed revision before).
 - Startup probe allows about 125s, and `startup_cpu_boost` is on. Cold start is about 4s now that `agent` is imported in the background.
