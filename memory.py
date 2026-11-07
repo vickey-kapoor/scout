@@ -43,26 +43,28 @@ def save_fact(topic: str, fact: str, source: str = "") -> None:
          (time.time(), topic, fact, source))
 
 
-def _keyword_filter(columns: tuple[str, str], query: str) -> tuple[str, list[str]]:
-    # "LangGraph agents" -> (topic LIKE '%langgraph%' OR fact LIKE '%langgraph%' OR ... agents ...)
-    # matching ANY keyword, so a multi-word query still finds a row that has one of them
-    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS] or [query]
-    clauses, params = [], []
-    for w in words:
-        for col in columns:
-            clauses.append(f"{col} LIKE ?")
-            params.append(f"%{w}%")
-    return "(" + " OR ".join(clauses) + ")", params
+def _search(table: str, columns: tuple[str, ...], text_cols: tuple[str, str],
+            query: str, limit: int) -> list[tuple]:
+    """Rows where any keyword of `query` appears as a WHOLE word in text_cols, newest first.
+
+    "LangGraph agents" matches a row containing either word. "go" matches "Go 1.18" but not
+    "Google": SQL LIKE narrows the candidates (substring match), then a word-boundary regex
+    keeps only real matches before the limit is applied, so partial hits can't crowd them out.
+    """
+    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS] or [query.lower()]
+    pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, words)) + r")\b", re.IGNORECASE)
+    like = " OR ".join(f"{c} LIKE ?" for _ in words for c in text_cols)
+    params = [f"%{w}%" for w in words for _ in text_cols]
+    rows = _run(f"SELECT {', '.join(columns + text_cols)} FROM {table} WHERE {like} "
+                "ORDER BY ts DESC", tuple(params))
+    hits = [r for r in rows if any(pattern.search(t or "") for t in r[len(columns):])]
+    return hits[:limit]
 
 
 def recall(query: str, limit: int = 5) -> str:
     """Keyword search over past runs and facts. Returns a text block for the model."""
-    where, p = _keyword_filter(("topic", "fact"), query)
-    facts = _run(f"SELECT topic, fact, source FROM facts WHERE {where} "
-                 "ORDER BY ts DESC LIMIT ?", (*p, limit))
-    where, p = _keyword_filter(("question", "answer"), query)
-    runs = _run(f"SELECT question, answer FROM runs WHERE {where} "
-                "ORDER BY ts DESC LIMIT ?", (*p, limit))
+    facts = [(t, f, s) for s, t, f in _search("facts", ("source",), ("topic", "fact"), query, limit)]
+    runs = _search("runs", (), ("question", "answer"), query, limit)
     out = []
     for topic, fact, source in facts:
         out.append(f"FACT [{topic}]: {fact}" + (f" (source: {source})" if source else ""))
