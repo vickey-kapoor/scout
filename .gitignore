@@ -22,4 +22,6 @@ __pycache__/
 *.pyc
 
 # Agent memory (SQLite)
+scout.db
+# old memory file from the first memory version
 memory.db

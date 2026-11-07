@@ -1,128 +1,104 @@
 # memory.py
-# Lesson 6: persistent memory across sessions. The messages list is memory for ONE
-# run; this keeps finished answers in SQLite so later runs can build on them.
-#
-#   save(question, answer)   -> store a finished run
-#   recall(question)         -> past runs that share keywords (full-text search, BM25)
-#   as_prompt(memories)      -> text block to append to the system prompt
-#
-# No embeddings: SQLite's built-in FTS5 does keyword search with BM25 ranking, which
-# is enough to find "I researched this before". Swap in vector search later if needed.
+# Lesson 6: long-term memory in SQLite. Survives between runs.
+# Two tables: runs (what was asked/answered) and facts (things worth reusing).
+# The model reads and writes memory through two tools (see tools.py):
+#   recall_memory -> recall()     remember -> save_fact()
+# and agent.py calls save_run() after every completed answer.
 
-import os
-import re
-import sqlite3
-import time
-from dataclasses import dataclass
+import os, re, sqlite3, time
 
-MAX_ANSWER_CHARS = 1500   # per recalled memory: enough to reuse, not enough to flood context
-
-
-@dataclass
-class Memory:
-    id: int
-    created: str
-    question: str
-    answer: str
-
-
-def _connect() -> sqlite3.Connection:
-    # a fresh connection per call: simple, and safe when FastAPI runs requests in threads
-    # path read per call, so SCOUT_MEMORY_DB set in .env (loaded after import) still applies
-    conn = sqlite3.connect(os.environ.get("SCOUT_MEMORY_DB", "memory.db"))
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS memories (
-            id       INTEGER PRIMARY KEY,
-            created  TEXT NOT NULL,
-            question TEXT NOT NULL,
-            answer   TEXT NOT NULL
-        );
-        -- search index over the same rows (external-content FTS5 table)
-        CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts
-            USING fts5(question, answer, content='memories', content_rowid='id');
-        CREATE TRIGGER IF NOT EXISTS memories_ai AFTER INSERT ON memories BEGIN
-            INSERT INTO memories_fts(rowid, question, answer)
-            VALUES (new.id, new.question, new.answer);
-        END;
-    """)
-    return conn
-
-
-def save(question: str, answer: str) -> None:
-    with _connect() as conn:
-        conn.execute(
-            "INSERT INTO memories (created, question, answer) VALUES (?, ?, ?)",
-            (time.strftime("%Y-%m-%d %H:%M"), question, answer),
-        )
-    conn.close()
-
-
-# common words that would match almost every memory; short topics like "go", "ai", "r" are kept
+# common words that would match almost everything; short topics like "go", "ai", "r" are kept
 STOPWORDS = set("""
 a an and are as at be by can did do does for from has have how i in is it its me my of on or
-s that the this to was were what when where which who why will with you your about latest new
+s that the this to was were what when where which who why will with you your about
 """.split())
 
 
-def _fts_query(text: str) -> str:
-    # "What's new in Python 3.14?" -> "14" OR "3" OR "python"
-    # each word is quoted so punctuation/keywords can't break FTS5 query syntax
-    words = {w for w in re.findall(r"\w+", text.lower()) if w not in STOPWORDS}
-    return " OR ".join(f'"{w}"' for w in sorted(words))
+def _conn() -> sqlite3.Connection:
+    # path read per call, so SCOUT_MEMORY_DB set in .env (loaded after import) still applies
+    conn = sqlite3.connect(os.environ.get("SCOUT_MEMORY_DB", "scout.db"))
+    conn.execute("""CREATE TABLE IF NOT EXISTS runs (
+        id INTEGER PRIMARY KEY, ts REAL, question TEXT, answer TEXT)""")
+    conn.execute("""CREATE TABLE IF NOT EXISTS facts (
+        id INTEGER PRIMARY KEY, ts REAL, topic TEXT, fact TEXT, source TEXT)""")
+    return conn
 
 
-def recall(question: str, k: int = 3) -> list[Memory]:
-    query = _fts_query(question)
-    if not query:
-        return []
-    conn = _connect()
+def _run(sql: str, params: tuple = ()) -> list[tuple]:
+    conn = _conn()
     try:
-        rows = conn.execute(
-            """SELECT m.id, m.created, m.question, m.answer
-               FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid
-               WHERE memories_fts MATCH ?
-               ORDER BY bm25(memories_fts) LIMIT ?""",
-            (query, k),
-        ).fetchall()
+        with conn:                      # commits on success
+            return conn.execute(sql, params).fetchall()
+    finally:
+        conn.close()                    # `with conn` alone doesn't close it
+
+
+def save_run(question: str, answer: str) -> None:
+    _run("INSERT INTO runs (ts, question, answer) VALUES (?, ?, ?)",
+         (time.time(), question, answer))
+
+
+def save_fact(topic: str, fact: str, source: str = "") -> None:
+    _run("INSERT INTO facts (ts, topic, fact, source) VALUES (?, ?, ?, ?)",
+         (time.time(), topic, fact, source))
+
+
+def _search(table: str, columns: tuple[str, ...], text_cols: tuple[str, str],
+            query: str, limit: int) -> list[tuple]:
+    """Rows where any keyword of `query` appears as a WHOLE word in text_cols, newest first.
+
+    "LangGraph agents" matches a row containing either word. "go" matches "Go 1.18" but not
+    "Google": SQL LIKE narrows the candidates (substring match), then a word-boundary regex
+    keeps only real matches before the limit is applied, so partial hits can't crowd them out.
+    """
+    words = [w for w in re.findall(r"\w+", query.lower()) if w not in STOPWORDS] or [query.lower()]
+    pattern = re.compile(r"\b(?:" + "|".join(map(re.escape, words)) + r")\b", re.IGNORECASE)
+    like = " OR ".join(f"{c} LIKE ?" for _ in words for c in text_cols)
+    params = [f"%{w}%" for w in words for _ in text_cols]
+    sql = f"SELECT {', '.join(columns + text_cols)} FROM {table} WHERE {like} ORDER BY ts DESC"
+    hits = []
+    conn = _conn()
+    try:
+        # the cursor streams rows newest-first: stop as soon as `limit` whole-word matches
+        # are found instead of loading every candidate into memory
+        for row in conn.execute(sql, tuple(params)):
+            if any(pattern.search(t or "") for t in row[len(columns):]):
+                hits.append(row)
+                if len(hits) == limit:
+                    break
     finally:
         conn.close()
-    return [Memory(*r) for r in rows]
+    return hits
 
 
-def _strip_tags(text: str) -> str:
-    # stored text must not be able to close the <past_research> block early
-    return re.sub(r"</?\s*past_research\s*>", "", text, flags=re.IGNORECASE)
-
-
-def as_prompt(memories: list[Memory]) -> str:
-    """Quote memories as data inside <past_research> tags. The system prompt tells the
-    model never to follow instructions found there (they came from earlier questions)."""
-    if not memories:
-        return ""
-    parts = [
-        "<past_research>",
-        "Notes from earlier research. They may be outdated or only loosely related: "
-        "use them as a starting point, and verify anything time-sensitive with a fresh search.",
-    ]
-    for m in memories:
-        q, a = _strip_tags(m.question), _strip_tags(m.answer[:MAX_ANSWER_CHARS])
-        parts.append(f"[{m.created}] Q: {q}\nA: {a}")
-    parts.append("</past_research>")
-    return "\n\n".join(parts)
+def recall(query: str, limit: int = 5) -> str:
+    """Keyword search over past runs and facts. Returns a text block for the model."""
+    facts = [(t, f, s) for s, t, f in _search("facts", ("source",), ("topic", "fact"), query, limit)]
+    runs = _search("runs", (), ("question", "answer"), query, limit)
+    out = []
+    for topic, fact, source in facts:
+        out.append(f"FACT [{topic}]: {fact}" + (f" (source: {source})" if source else ""))
+    for q, a in runs:
+        out.append(f"PAST RUN — Q: {q}\n  A: {a[:300]}")
+    if out:
+        return "\n".join(out)
+    # No keyword match. Questions like "what did I ask earlier?" share no keywords with the
+    # earlier run, so show the most recent runs instead of nothing.
+    recent = _run("SELECT question, answer FROM runs ORDER BY ts DESC LIMIT ?", (limit,))
+    if not recent:
+        return "Nothing in memory about that."
+    return "No match for that query. Most recent runs:\n" + "\n".join(
+        f"PAST RUN — Q: {q}\n  A: {a[:300]}" for q, a in recent)
 
 
 if __name__ == "__main__":
-    # python memory.py            -> list recent memories
-    # python memory.py <question> -> show what recall() would return
+    # python memory.py          -> recent facts and runs
+    # python memory.py <query>  -> what recall_memory would return
     import sys
     if len(sys.argv) > 1:
-        found = recall(" ".join(sys.argv[1:]))
+        print(recall(" ".join(sys.argv[1:])))
     else:
-        conn = _connect()
-        found = [Memory(*r) for r in conn.execute(
-            "SELECT id, created, question, answer FROM memories ORDER BY id DESC LIMIT 10")]
-        conn.close()
-    for m in found:
-        print(f"#{m.id} [{m.created}] {m.question}\n    {m.answer[:150]!r}")
-    if not found:
-        print("(no memories)")
+        for topic, fact in _run("SELECT topic, fact FROM facts ORDER BY ts DESC LIMIT 10"):
+            print(f"FACT [{topic}] {fact}")
+        for q, a in _run("SELECT question, answer FROM runs ORDER BY ts DESC LIMIT 10"):
+            print(f"RUN  {q}\n     {a[:120]!r}")
