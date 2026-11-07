@@ -5,7 +5,8 @@ import os
 import httpx
 from bs4 import BeautifulSoup
 from tavily import TavilyClient
-from models import SearchInput, FetchInput
+from models import SearchInput, FetchInput, RecallInput, RememberInput
+import memory
 from dotenv import load_dotenv
 from anthropic.types import ToolParam
 
@@ -29,12 +30,25 @@ def fetch_page(args: FetchInput) -> str:
     text = " ".join(soup.get_text(" ").split())
     return text[:8000]                       # cap size — context is finite
 
+def recall_memory(args: RecallInput) -> str:
+    """Look up what scout already knows or was asked before. Call this FIRST for any question that may have come up previously."""
+    return memory.recall(args.query)
+
+def remember(args: RememberInput) -> str:
+    """Save a fact worth reusing in future runs. Use for key findings, not trivia."""
+    memory.save_fact(args.topic, args.fact, args.source)
+    return f"Saved: [{args.topic}] {args.fact}"
+
 REGISTRY = {
-    "search_web":  (SearchInput,  search_web),
-    "fetch_page":  (FetchInput,   fetch_page),
+    "recall_memory": (RecallInput,   recall_memory),
+    "remember":      (RememberInput, remember),
+    "search_web":    (SearchInput,   search_web),
+    "fetch_page":    (FetchInput,    fetch_page),
 }
+MEMORY_TOOLS = {"recall_memory", "remember"}   # left out when memory is off (HTTP default)
 
 TOOLS: list[ToolParam] = [
     {"name": n, "description": fn.__doc__, "input_schema": m.model_json_schema()}
     for n, (m, fn) in REGISTRY.items()
 ]
+TOOLS_NO_MEMORY = [t for t in TOOLS if t["name"] not in MEMORY_TOOLS]

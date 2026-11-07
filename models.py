@@ -10,3 +10,10 @@ class SearchInput(BaseModel):
 
 class FetchInput(BaseModel):
     url: str = Field(description="Full URL to read, starting with http")
+class RecallInput(BaseModel):
+    query: str = Field(description="Keyword or topic to look up in memory")
+
+class RememberInput(BaseModel):
+    topic: str = Field(description="Short topic label, e.g. 'LangGraph'")
+    fact: str = Field(description="One self-contained fact worth reusing later")
+    source: str = Field(default="", description="URL the fact came from, if any")

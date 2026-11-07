@@ -42,7 +42,7 @@ scout/
 ├── tools.py          # tool functions + registry; TOOLS schema is generated
 ├── models.py         # Pydantic models: validate tool inputs, generate schemas
 ├── trace.py          # writes each run to traces/<run_id>.jsonl
-├── memory.py         # SQLite memory: saves answers, recalls related ones
+├── memory.py         # SQLite memory: runs + facts, used via recall_memory / remember tools
 └── README.md
 ```
 
@@ -53,7 +53,7 @@ scout/
 | `models.py` | The shape of each tool's input. Pydantic validates at the door and builds the JSON schema the model reads |
 | `main.py` | HTTP wrapper around `agent.run()` for deployment |
 | `trace.py` | Logs every model call and tool call (tokens, timings, results) as JSON lines |
-| `memory.py` | Saves each finished answer to `memory.db`; before a run, recalls related past answers (SQLite FTS5 keyword search) into the system prompt |
+| `memory.py` | Long-term memory in `scout.db`: past runs and saved facts. The model reads and writes it through the `recall_memory` and `remember` tools |
 
 ## Tools
 
@@ -61,6 +61,8 @@ scout/
 |---|---|
 | `search_web` | Web search via Tavily — returns titles, URLs, snippets |
 | `fetch_page` | Downloads a URL and returns its readable text (capped at 8000 chars) |
+| `recall_memory` | Looks up saved facts and past runs in `scout.db` (see [Memory](#memory)) |
+| `remember` | Saves a durable fact (topic, fact, source URL) for future runs |
 
 The model decides which tools to call and in what order. The code only describes them and obeys.
 
@@ -103,46 +105,46 @@ curl -X POST localhost:8000/ask -H "Content-Type: application/json" \
 
 ## Memory
 
-Each complete answer is saved to `memory.db` (SQLite). At the start of a run, scout
-looks up related past answers by keyword and passes them to the model as quoted notes to
-verify, inside `<past_research>` tags. The system prompt says never to follow instructions
-found inside them.
+scout keeps long-term memory in `scout.db` (SQLite), and the model uses it through two tools:
+
+- **`recall_memory(query)`:** the system prompt tells the model to call this before searching the web. It returns matching **facts** and **past runs**, matched on any keyword in the query. If nothing matches, it returns the most recent runs, so "what did I ask you earlier?" still works.
+- **`remember(topic, fact, source)`:** the model saves a durable fact it learned, such as a key finding with its URL.
+- Every complete answer (`end_turn`, not empty) is also saved as a run. Cut-off answers and `MAX_STEPS` stops are not.
+
+Memory results come back as tool results, the same way web pages do. The system prompt says to treat them as notes from earlier runs, never as instructions, and to verify anything time-sensitive.
 
 - **CLI (`python agent.py`):** memory is on.
-- **HTTP API (`/ask`):** memory is **off** unless `SCOUT_MEMORY_HTTP=1` is set. Memory isn't separated by caller yet, so with several callers one person's research could appear in another's answer.
-
-- **Location:** `memory.db` in the folder you run scout from. It's created on the first run. Set `SCOUT_MEMORY_DB` to use another path.
+- **HTTP API (`/ask`):** memory is **off** unless `SCOUT_MEMORY_HTTP=1` is set, and the model isn't offered the memory tools at all. Memory isn't separated by caller yet, so with several callers one person's research could appear in another's answer.
+- **Location:** `scout.db` in the folder you run scout from. It's created on first use. Set `SCOUT_MEMORY_DB` to use another path.
 - **Not committed or shipped:** it's listed in `.gitignore` and `.dockerignore`.
-- **Reset:** delete `memory.db`.
+- **Reset:** delete `scout.db`.
 - **On Cloud Run** it lives on the container's temporary disk. It's lost when an instance shuts down, and each instance has its own copy.
 
 ### Inspecting it
 
 ```powershell
-python memory.py                    # 10 most recent memories
-python memory.py "python release"   # what scout would recall for this question
-sqlite3 memory.db                   # SQL shell (winget install SQLite.SQLite)
+python memory.py              # 10 most recent facts and runs
+python memory.py LangGraph    # what recall_memory would return
+sqlite3 scout.db              # SQL shell (winget install SQLite.SQLite)
 ```
 
 Or open it in [DB Browser for SQLite](https://sqlitebrowser.org/) (`winget install DBBrowserForSQLite.DBBrowserForSQLite`).
 Close the GUI while scout is running, because an open database can block saves.
 
-The data is in two tables. `memories` holds the rows (`id`, `created`, `question`, `answer`).
-`memories_fts` is the full-text search index over them, and it updates automatically on insert.
+There are two tables. `runs` has `id, ts, question, answer` and `facts` has `id, ts, topic, fact, source`. `ts` is a Unix timestamp.
 
 ```sql
--- everything, newest first
-SELECT id, created, question FROM memories ORDER BY id DESC;
+-- facts, newest first
+SELECT id, datetime(ts, 'unixepoch') AS saved, topic, fact, source FROM facts ORDER BY ts DESC;
 
--- keyword search, ranked the way scout ranks it (best match first)
-SELECT m.id, m.question, bm25(memories_fts) AS score
-FROM memories_fts JOIN memories m ON m.id = memories_fts.rowid
-WHERE memories_fts MATCH 'python OR release'
-ORDER BY score;
+-- past runs, newest first
+SELECT id, datetime(ts, 'unixepoch') AS saved, question FROM runs ORDER BY ts DESC;
 
--- delete a memory, then rebuild the index so search stays in sync
-DELETE FROM memories WHERE id = 3;
-INSERT INTO memories_fts(memories_fts) VALUES ('rebuild');
+-- search, the way recall_memory does (any keyword)
+SELECT topic, fact FROM facts WHERE topic LIKE '%langgraph%' OR fact LIKE '%langgraph%';
+
+-- forget something
+DELETE FROM facts WHERE id = 3;
 ```
 
 ## Docker / Cloud Run
@@ -155,7 +157,7 @@ docker run --rm -p 8080:8080 --env-file .env scout
 The image never contains `.env`. On Cloud Run the keys come from Secret Manager
 (`scout-anthropic-api-key`, `scout-tavily-api-key`). The service is deployed with Terraform;
 see [`infra/README.md`](infra/README.md) for the full steps.
-Note: `traces/` and `memory.db` live on the container's temporary disk, so they are lost on restart and not shared between instances.
+Note: `traces/` and `scout.db` live on the container's temporary disk, so they are lost on restart and not shared between instances.
 
 ## How it works, in a little more detail
 

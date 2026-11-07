@@ -10,4 +10,4 @@ __pycache__/
 .git/
 .gitignore
 infra/
-memory.db
+scout.db
