@@ -21,7 +21,9 @@ traces/
 __pycache__/
 *.pyc
 
-# Agent memory (SQLite)
-scout.db
-# old memory file from the first memory version
-memory.db
+# Agent memory (SQLite: scout.db) — any .db holds saved research
+*.db
+
+# Saved Terraform plans (can contain sensitive values)
+tfplan
+*.tfplan

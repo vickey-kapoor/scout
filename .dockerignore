@@ -10,6 +10,5 @@ __pycache__/
 .git/
 .gitignore
 infra/
-scout.db
-memory.db
+# SQLite databases (scout.db) hold saved research — keep them out of the image
 *.db
