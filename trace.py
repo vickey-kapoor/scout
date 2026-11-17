@@ -16,6 +16,7 @@ class Trace:
         self.tokens_in = self.tokens_out = 0
         self.steps = 0                 # model calls this run (read by evals.py)
         self.tools_used: list[str] = []
+        self.stop_reason = None        # of the last model call: "end_turn" = finished normally
         self.log("run_start", question=question)
 
     def log(self, event: str, **data):
@@ -26,6 +27,7 @@ class Trace:
     def model_call(self, step: int, response):
         u = response.usage
         self.steps += 1
+        self.stop_reason = response.stop_reason
         self.tokens_in += u.input_tokens
         self.tokens_out += u.output_tokens
         self.log("model_call", step=step, stop_reason=response.stop_reason,

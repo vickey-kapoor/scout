@@ -12,6 +12,7 @@ on:
       - "memory.py"
       - "trace.py"
       - "evals.py"
+      - "test_evals.py"
       - "evals/**"
       - "requirements.txt"
       - ".github/workflows/evals.yml"
@@ -36,6 +37,9 @@ jobs:
           python-version: "3.12"
           cache: pip
       - run: pip install -r requirements.txt
+      # free and instant: if the grader is broken, don't spend tokens on a run it would misjudge
+      - name: Test the grader
+        run: python test_evals.py
       # a missing secret arrives as an empty string: stop with one clear error
       # instead of letting every eval case fail on auth
       - name: Check API key secrets

@@ -45,6 +45,7 @@ scout/
 ├── memory.py         # SQLite memory: runs + facts, used via recall_memory / remember tools
 ├── evals.py          # runs every eval case, grades answers, saves results
 ├── evals/cases.jsonl # the eval questions and what a correct answer must contain
+├── test_evals.py     # tests for the grader itself (no API keys needed)
 ├── .github/workflows/evals.yml  # runs evals in CI on agent-code PRs
 ├── infra/            # Terraform for Cloud Run (see infra/README.md)
 ├── README.md
@@ -187,9 +188,19 @@ Each case in `evals/cases.jsonl` is one JSON line:
 | `expect` | Regexes (case-insensitive) that must **all** appear in the answer |
 | `domains` | Optional. At least one cited URL must be on one of these sites |
 | `require_source` | Optional, default `true`. Set `false` for questions with no real answer |
+| `max_steps` | Optional. Fail if the agent needed more model calls than this |
 
-Each answer gets separate yes/no checks (`finished`, `correct`, `cites_source`, `trusted_domain`),
-so a failure tells you *what* broke. Things to know:
+Each run gets separate yes/no checks, so a failure tells you *what* broke:
+
+| Check | Fails when |
+|---|---|
+| `finished` | The model didn't stop on its own (`end_turn`): cut off by `max_tokens`, stopped by `MAX_STEPS`, or crashed |
+| `correct` | An `expect` pattern is missing from the answer |
+| `cites_source` | No URL in the answer |
+| `trusted_domain` | No cited URL is on a `domains` site (malformed URLs count as not trusted) |
+| `efficient` | More model calls than `max_steps` |
+
+Things to know:
 
 - **Memory is off during evals.** Otherwise later runs would just recall earlier answers.
 - **Stable facts only.** "Who won yesterday?" changes, so it can't have a fixed expected answer.
@@ -198,6 +209,9 @@ so a failure tells you *what* broke. Things to know:
 - **Results are saved** to `evals/results/<timestamp>.jsonl` (gitignored), with full answers and
   trace paths, so you can compare runs and open the trace of any failure.
 - **Model output varies.** Run twice before trusting a 1-case difference.
+- **Test the grader too.** `python test_evals.py` checks the checks: a cut-off answer must not
+  count as finished, a malformed URL must fail rather than crash. An eval that wrongly passes
+  is worse than none, because you trust it.
 
 ### In CI
 
@@ -205,6 +219,7 @@ so a failure tells you *what* broke. Things to know:
 or on demand from the Actions tab ("Run workflow"). Setup: add the repo secrets
 `ANTHROPIC_API_KEY` and `TAVILY_API_KEY` (Settings → Secrets and variables → Actions).
 
+- It runs `test_evals.py` first (free); a broken grader stops the job before any tokens are spent.
 - The job fails if fewer than `EVAL_MIN_PASS` (80%) of cases pass. It's a rate, not 100%,
   because one unlucky answer shouldn't block a PR.
 - The score table appears on the run's summary page; answers and traces are a downloadable artifact.

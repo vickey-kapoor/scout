@@ -13,7 +13,6 @@ import json, os, re, sys, time
 from pathlib import Path
 from urllib.parse import urlparse
 
-from agent import run
 from trace import Trace
 
 CASES = Path("evals/cases.jsonl")
@@ -26,18 +25,28 @@ def load_cases(only: list[str]) -> list[dict]:
     return [c for c in cases if not only or c["id"] in only]
 
 
-def grade(case: dict, answer: str) -> dict[str, bool]:
+def hostname(url: str) -> str:
+    """Host of a URL, or "" if it doesn't parse. Model output is untrusted input:
+    a malformed URL like "https://[oops" must fail its check, not crash the suite."""
+    try:
+        return urlparse(url).hostname or ""
+    except ValueError:
+        return ""
+
+
+def grade(case: dict, answer: str, trace: Trace) -> dict[str, bool]:
     """Deterministic checks: cheap, fast, and the same result every time.
 
-    Each check answers one yes/no question about the answer. A case passes only if
+    Each check answers one yes/no question about the run. A case passes only if
     every check passes. Keeping checks separate tells you *what* broke, not just that
     something did.
     """
     urls = URL_RE.findall(answer)
-    hosts = [urlparse(u).hostname or "" for u in urls]
+    hosts = [hostname(u) for u in urls]
     checks = {
-        # hit MAX_STEPS, or returned nothing at all
-        "finished": bool(answer.strip()) and not answer.startswith("Stopped:"),
+        # the model stopped on its own ("end_turn"). Not: cut off by max_tokens (the text
+        # looks like an answer but is truncated), stopped by MAX_STEPS, or crashed
+        "finished": trace.stop_reason == "end_turn" and bool(answer.strip()),
         # every expected pattern appears (regex, case-insensitive)
         "correct": all(re.search(p, answer, re.IGNORECASE) for p in case["expect"]),
     }
@@ -48,10 +57,15 @@ def grade(case: dict, answer: str) -> dict[str, bool]:
     if case.get("domains"):
         checks["trusted_domain"] = any(
             h == d or h.endswith("." + d) for h in hosts for d in case["domains"])
+    # optional step budget: a right answer that took 9 model calls still costs 9 calls
+    if "max_steps" in case:
+        checks["efficient"] = trace.steps <= case["max_steps"]
     return checks
 
 
 def run_case(case: dict) -> dict:
+    from agent import run   # imported here so grade() can be tested without API keys
+
     trace = Trace(case["question"])
     t0 = time.time()
     try:
@@ -61,13 +75,14 @@ def run_case(case: dict) -> dict:
         error = None
     except Exception as e:                       # an API error shouldn't stop the suite
         answer, error = "", f"{type(e).__name__}: {e}"
-    checks = grade(case, answer)
+    checks = grade(case, answer, trace)
     return {
         "id": case["id"],
         "passed": all(checks.values()),
         "checks": checks,
         "steps": trace.steps,
         "tools": trace.tools_used,
+        "stop_reason": trace.stop_reason,
         "tokens_in": trace.tokens_in,
         "tokens_out": trace.tokens_out,
         "seconds": round(time.time() - t0, 1),
