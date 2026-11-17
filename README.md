@@ -45,7 +45,14 @@ scout/
 ├── memory.py         # SQLite memory: runs + facts, used via recall_memory / remember tools
 ├── evals.py          # runs every eval case, grades answers, saves results
 ├── evals/cases.jsonl # the eval questions and what a correct answer must contain
-└── README.md
+├── .github/workflows/evals.yml  # runs evals in CI on agent-code PRs
+├── infra/            # Terraform for Cloud Run (see infra/README.md)
+├── README.md
+│
+│   created at runtime (gitignored):
+├── scout.db          # long-term memory
+├── traces/           # one <run_id>.jsonl per run
+└── evals/results/    # one <timestamp>.jsonl per eval run
 ```
 
 | File | Responsibility |
@@ -237,7 +244,7 @@ Note: `traces/` and `scout.db` live on the container's temporary disk, so they a
 
 ## Roadmap
 
-- [x] Observability: log every model call and tool result
+- [x] Observability: log every model call and tool result (`trace.py`)
 - [x] Persistent memory across sessions (SQLite)
 - [ ] Context management: summarize when the message list gets long
 - [ ] Human-approval gate for side-effecting tools
