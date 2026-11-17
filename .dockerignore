@@ -5,6 +5,8 @@
 # Local-only
 .venv/
 traces/
+evals/
+evals.py
 __pycache__/
 *.pyc
 .git/

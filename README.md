@@ -43,6 +43,8 @@ scout/
 ├── models.py         # Pydantic models: validate tool inputs, generate schemas
 ├── trace.py          # writes each run to traces/<run_id>.jsonl
 ├── memory.py         # SQLite memory: runs + facts, used via recall_memory / remember tools
+├── evals.py          # runs every eval case, grades answers, saves results
+├── evals/cases.jsonl # the eval questions and what a correct answer must contain
 └── README.md
 ```
 
@@ -53,6 +55,7 @@ scout/
 | `models.py` | The shape of each tool's input. Pydantic validates at the door and builds the JSON schema the model reads |
 | `main.py` | HTTP wrapper around `agent.run()` for deployment |
 | `trace.py` | Logs every model call and tool call (tokens, timings, results) as JSON lines |
+| `evals.py` | Runs the fixed question set, grades each answer, prints pass rate, steps, tokens and time |
 | `memory.py` | Long-term memory in `scout.db`: past runs and saved facts. The model reads and writes it through the `recall_memory` and `remember` tools |
 
 ## Tools
@@ -147,6 +150,48 @@ SELECT topic, fact FROM facts WHERE topic LIKE '%langgraph%' OR fact LIKE '%lang
 DELETE FROM facts WHERE id = 3;
 ```
 
+## Evals
+
+An eval is a fixed set of questions checked the same way every time. Without one, "I changed the
+prompt and it seems better" is a feeling. With one, it's `9/11 → 10/11, 4.2 → 3.1 steps`.
+
+```bash
+python evals.py                       # every case (makes real API calls: costs tokens)
+python evals.py austen moon-landing   # just these cases
+```
+
+```
+case                 result steps  tok in tok out   sec  failed checks
+python-creator       PASS       3    5120     140   9.8
+australia-capital    FAIL       2    3010      95   6.1  trusted_domain
+...
+10/11 passed (91%)  |  avg 2.8 steps, 4380 in / 130 out tokens, 8.4s
+```
+
+Each case in `evals/cases.jsonl` is one JSON line:
+
+```json
+{"id": "postgres-port", "question": "What is the default TCP port for PostgreSQL?",
+ "expect": ["5432"], "domains": ["postgresql.org"]}
+```
+
+| Field | Meaning |
+|---|---|
+| `expect` | Regexes (case-insensitive) that must **all** appear in the answer |
+| `domains` | Optional. At least one cited URL must be on one of these sites |
+| `require_source` | Optional, default `true`. Set `false` for questions with no real answer |
+
+Each answer gets separate yes/no checks (`finished`, `correct`, `cites_source`, `trusted_domain`),
+so a failure tells you *what* broke. Things to know:
+
+- **Memory is off during evals.** Otherwise later runs would just recall earlier answers.
+- **Stable facts only.** "Who won yesterday?" changes, so it can't have a fixed expected answer.
+- **Include a trick question.** `made-up-town` asks about a town that doesn't exist; passing means
+  scout says so instead of inventing an answer.
+- **Results are saved** to `evals/results/<timestamp>.jsonl` (gitignored), with full answers and
+  trace paths, so you can compare runs and open the trace of any failure.
+- **Model output varies.** Run twice before trusting a 1-case difference.
+
 ## Docker / Cloud Run
 
 ```bash
@@ -176,15 +221,16 @@ Note: `traces/` and `scout.db` live on the container's temporary disk, so they a
 - **Lesson 4** — Real tools: web search and page fetch (`tools.py`)
 - **Lesson 5** — Tracing: every model and tool call as JSON lines (`trace.py`)
 - **Lesson 6** — Persistent memory across sessions with SQLite (`memory.py`)
+- **Lesson 7** — Evals: a fixed question set, graded automatically (`evals.py`)
 
 ## Roadmap
 
-- [ ] Observability: log every model call and tool result
+- [x] Observability: log every model call and tool result
 - [x] Persistent memory across sessions (SQLite)
 - [ ] Context management: summarize when the message list gets long
 - [ ] Human-approval gate for side-effecting tools
 - [ ] MCP client: plug in third-party tool servers
-- [ ] Evals: a fixed set of questions with expected answers
+- [x] Evals: a fixed set of questions with expected answers
 
 ## Author
 

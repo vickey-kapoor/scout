@@ -1,0 +1,11 @@
+{"id": "python-creator", "question": "Who created the Python programming language?", "expect": ["guido van rossum"], "domains": ["python.org", "wikipedia.org"]}
+{"id": "transformer-year", "question": "In what year was the paper 'Attention Is All You Need' published?", "expect": ["2017"], "domains": ["arxiv.org", "neurips.cc", "papers.nips.cc", "wikipedia.org"]}
+{"id": "austen", "question": "Who wrote the novel Pride and Prejudice?", "expect": ["austen"]}
+{"id": "australia-capital", "question": "What is the capital city of Australia?", "expect": ["canberra"]}
+{"id": "rust-origin", "question": "Which organization originally sponsored the development of the Rust programming language?", "expect": ["mozilla"]}
+{"id": "postgres-port", "question": "What is the default TCP port for PostgreSQL?", "expect": ["5432"], "domains": ["postgresql.org"]}
+{"id": "moon-landing", "question": "Who was the first person to walk on the Moon, and in what year?", "expect": ["armstrong", "1969"]}
+{"id": "http-418", "question": "What does HTTP status code 418 mean?", "expect": ["teapot"]}
+{"id": "berlin-wall", "question": "In what year did the Berlin Wall fall?", "expect": ["1989"]}
+{"id": "sqlite-author", "question": "Who is the original author of the SQLite database engine?", "expect": ["hipp"], "domains": ["sqlite.org", "wikipedia.org"]}
+{"id": "made-up-town", "question": "What was the exact attendance at the 1843 founding ceremony of Vexmoor Falls, Ohio?", "expect": ["(couldn.t|could not|unable to|no (reliable )?(information|record)|not find|didn.t find|did not find|not exist|doesn.t exist|does not exist)"], "require_source": false}
