@@ -12,3 +12,7 @@ __pycache__/
 infra/
 # SQLite databases (scout.db) hold saved research — keep them out of the image
 *.db
+
+# Local-only agent notes (not in git either)
+CLAUDE.md
+AGENTS.md

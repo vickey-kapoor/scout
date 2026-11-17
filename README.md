@@ -43,7 +43,12 @@ scout/
 ├── models.py         # Pydantic models: validate tool inputs, generate schemas
 ├── trace.py          # writes each run to traces/<run_id>.jsonl
 ├── memory.py         # SQLite memory: runs + facts, used via recall_memory / remember tools
-└── README.md
+├── infra/            # Terraform for Cloud Run (see infra/README.md)
+├── README.md
+│
+│   created at runtime (gitignored):
+├── scout.db          # long-term memory
+└── traces/           # one <run_id>.jsonl per run
 ```
 
 | File | Responsibility |
@@ -179,7 +184,7 @@ Note: `traces/` and `scout.db` live on the container's temporary disk, so they a
 
 ## Roadmap
 
-- [ ] Observability: log every model call and tool result
+- [x] Observability: log every model call and tool result (`trace.py`)
 - [x] Persistent memory across sessions (SQLite)
 - [ ] Context management: summarize when the message list gets long
 - [ ] Human-approval gate for side-effecting tools
