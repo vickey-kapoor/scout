@@ -14,6 +14,9 @@ class Trace:
         self.path = TRACE_DIR / f"{self.run_id}.jsonl"
         self.start = time.time()
         self.tokens_in = self.tokens_out = 0
+        self.steps = 0                 # model calls this run (read by evals.py)
+        self.tools_used: list[str] = []
+        self.stop_reason = None        # of the last model call: "end_turn" = finished normally
         self.log("run_start", question=question)
 
     def log(self, event: str, **data):
@@ -23,6 +26,8 @@ class Trace:
 
     def model_call(self, step: int, response):
         u = response.usage
+        self.steps += 1
+        self.stop_reason = response.stop_reason
         self.tokens_in += u.input_tokens
         self.tokens_out += u.output_tokens
         self.log("model_call", step=step, stop_reason=response.stop_reason,
@@ -30,6 +35,7 @@ class Trace:
                  content=[b.model_dump() for b in response.content])
 
     def tool_call(self, step: int, name: str, args: dict, result: str, ms: float):
+        self.tools_used.append(name)
         self.log("tool_call", step=step, tool=name, args=args,
                  result_preview=result[:300], result_chars=len(result), ms=round(ms))
 

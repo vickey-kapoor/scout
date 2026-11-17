@@ -43,12 +43,17 @@ scout/
 ├── models.py         # Pydantic models: validate tool inputs, generate schemas
 ├── trace.py          # writes each run to traces/<run_id>.jsonl
 ├── memory.py         # SQLite memory: runs + facts, used via recall_memory / remember tools
+├── evals.py          # runs every eval case, grades answers, saves results
+├── evals/cases.jsonl # the eval questions and what a correct answer must contain
+├── test_evals.py     # tests for the grader itself (no API keys needed)
+├── .github/workflows/evals.yml  # runs evals in CI on agent-code PRs
 ├── infra/            # Terraform for Cloud Run (see infra/README.md)
 ├── README.md
 │
 │   created at runtime (gitignored):
 ├── scout.db          # long-term memory
-└── traces/           # one <run_id>.jsonl per run
+├── traces/           # one <run_id>.jsonl per run
+└── evals/results/    # one <timestamp>.jsonl per eval run
 ```
 
 | File | Responsibility |
@@ -58,6 +63,7 @@ scout/
 | `models.py` | The shape of each tool's input. Pydantic validates at the door and builds the JSON schema the model reads |
 | `main.py` | HTTP wrapper around `agent.run()` for deployment |
 | `trace.py` | Logs every model call and tool call (tokens, timings, results) as JSON lines |
+| `evals.py` | Runs the fixed question set, grades each answer, prints pass rate, steps, tokens and time |
 | `memory.py` | Long-term memory in `scout.db`: past runs and saved facts. The model reads and writes it through the `recall_memory` and `remember` tools |
 
 ## Tools
@@ -152,6 +158,74 @@ SELECT topic, fact FROM facts WHERE topic LIKE '%langgraph%' OR fact LIKE '%lang
 DELETE FROM facts WHERE id = 3;
 ```
 
+## Evals
+
+An eval is a fixed set of questions checked the same way every time. Without one, "I changed the
+prompt and it seems better" is a feeling. With one, it's `9/11 → 10/11, 4.2 → 3.1 steps`.
+
+```bash
+python evals.py                       # every case (makes real API calls: costs tokens)
+python evals.py austen moon-landing   # just these cases
+```
+
+```
+case                 result steps  tok in tok out   sec  failed checks
+python-creator       PASS       3    5120     140   9.8
+australia-capital    FAIL       2    3010      95   6.1  trusted_domain
+...
+10/11 passed (91%)  |  avg 2.8 steps, 4380 in / 130 out tokens, 8.4s
+```
+
+Each case in `evals/cases.jsonl` is one JSON line:
+
+```json
+{"id": "postgres-port", "question": "What is the default TCP port for PostgreSQL?",
+ "expect": ["5432"], "domains": ["postgresql.org"]}
+```
+
+| Field | Meaning |
+|---|---|
+| `expect` | Regexes (case-insensitive) that must **all** appear in the answer |
+| `domains` | Optional. At least one cited URL must be on one of these sites |
+| `require_source` | Optional, default `true`. Set `false` for questions with no real answer |
+| `max_steps` | Optional. Fail if the agent needed more model calls than this |
+
+Each run gets separate yes/no checks, so a failure tells you *what* broke:
+
+| Check | Fails when |
+|---|---|
+| `finished` | The model didn't stop on its own (`end_turn`): cut off by `max_tokens`, stopped by `MAX_STEPS`, or crashed |
+| `correct` | An `expect` pattern is missing from the answer |
+| `cites_source` | No URL in the answer |
+| `trusted_domain` | No cited URL is on a `domains` site (malformed URLs count as not trusted) |
+| `efficient` | More model calls than `max_steps` |
+
+Things to know:
+
+- **Memory is off during evals.** Otherwise later runs would just recall earlier answers.
+- **Stable facts only.** "Who won yesterday?" changes, so it can't have a fixed expected answer.
+- **Include a trick question.** `made-up-town` asks about a town that doesn't exist; passing means
+  scout says so instead of inventing an answer.
+- **Results are saved** to `evals/results/<timestamp>.jsonl` (gitignored), with full answers and
+  trace paths, so you can compare runs and open the trace of any failure.
+- **Model output varies.** Run twice before trusting a 1-case difference.
+- **Test the grader too.** `python test_evals.py` checks the checks: a cut-off answer must not
+  count as finished, a malformed URL must fail rather than crash. An eval that wrongly passes
+  is worse than none, because you trust it.
+
+### In CI
+
+`.github/workflows/evals.yml` runs the suite on GitHub Actions for PRs that change agent code,
+or on demand from the Actions tab ("Run workflow"). Setup: add the repo secrets
+`ANTHROPIC_API_KEY` and `TAVILY_API_KEY` (Settings → Secrets and variables → Actions).
+
+- It runs `test_evals.py` first (free); a broken grader stops the job before any tokens are spent.
+- The job fails if fewer than `EVAL_MIN_PASS` (80%) of cases pass. It's a rate, not 100%,
+  because one unlucky answer shouldn't block a PR.
+- The score table appears on the run's summary page; answers and traces are a downloadable artifact.
+- Each run costs real tokens, so docs-only PRs skip it and a new push cancels the older run.
+- PRs from forks don't get secrets, so the job can't run there.
+
 ## Docker / Cloud Run
 
 ```bash
@@ -181,6 +255,7 @@ Note: `traces/` and `scout.db` live on the container's temporary disk, so they a
 - **Lesson 4** — Real tools: web search and page fetch (`tools.py`)
 - **Lesson 5** — Tracing: every model and tool call as JSON lines (`trace.py`)
 - **Lesson 6** — Persistent memory across sessions with SQLite (`memory.py`)
+- **Lesson 7** — Evals: a fixed question set, graded automatically (`evals.py`)
 
 ## Roadmap
 
@@ -189,7 +264,7 @@ Note: `traces/` and `scout.db` live on the container's temporary disk, so they a
 - [ ] Context management: summarize when the message list gets long
 - [ ] Human-approval gate for side-effecting tools
 - [ ] MCP client: plug in third-party tool servers
-- [ ] Evals: a fixed set of questions with expected answers
+- [x] Evals: a fixed set of questions with expected answers
 
 ## Author
 

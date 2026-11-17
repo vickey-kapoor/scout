@@ -24,8 +24,9 @@ Search the web, read the most relevant pages, then answer concisely with source 
 Do not guess — if you didn't find it, say so."""
 MAX_STEPS = 10   # guardrail: never loop forever
 
-def run(question: str, use_memory: bool = True) -> str:
-    trace = Trace(question)
+def run(question: str, use_memory: bool = True, trace: Trace | None = None) -> str:
+    # pass your own Trace to read its numbers afterwards (evals.py does this)
+    trace = trace or Trace(question)
     # memory off (the HTTP default): the model isn't offered the memory tools at all
     system, tools = (SYSTEM, TOOLS) if use_memory else (SYSTEM_NO_MEMORY, TOOLS_NO_MEMORY)
     messages: list[MessageParam] = [{"role": "user", "content": question}]
