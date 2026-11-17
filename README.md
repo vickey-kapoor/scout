@@ -192,6 +192,18 @@ so a failure tells you *what* broke. Things to know:
   trace paths, so you can compare runs and open the trace of any failure.
 - **Model output varies.** Run twice before trusting a 1-case difference.
 
+### In CI
+
+`.github/workflows/evals.yml` runs the suite on GitHub Actions for PRs that change agent code,
+or on demand from the Actions tab ("Run workflow"). Setup: add the repo secrets
+`ANTHROPIC_API_KEY` and `TAVILY_API_KEY` (Settings → Secrets and variables → Actions).
+
+- The job fails if fewer than `EVAL_MIN_PASS` (80%) of cases pass. It's a rate, not 100%,
+  because one unlucky answer shouldn't block a PR.
+- The score table appears on the run's summary page; answers and traces are a downloadable artifact.
+- Each run costs real tokens, so docs-only PRs skip it and a new push cancels the older run.
+- PRs from forks don't get secrets, so the job can't run there.
+
 ## Docker / Cloud Run
 
 ```bash

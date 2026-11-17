@@ -1,0 +1,53 @@
+# Runs the eval suite (evals.py) with real API calls.
+# Needs repo secrets ANTHROPIC_API_KEY and TAVILY_API_KEY.
+# Each run costs tokens, so it only runs when agent code changes, or by hand.
+name: evals
+
+on:
+  pull_request:
+    paths:
+      - "agent.py"
+      - "tools.py"
+      - "models.py"
+      - "memory.py"
+      - "trace.py"
+      - "evals.py"
+      - "evals/**"
+      - "requirements.txt"
+      - ".github/workflows/evals.yml"
+  workflow_dispatch:          # "Run workflow" button on the Actions tab
+
+# a new push to the same PR cancels the older, now-stale run (saves tokens)
+concurrency:
+  group: evals-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  evals:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Run evals
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY }}
+          EVAL_MIN_PASS: "0.8"
+        run: python evals.py
+      - name: Upload answers and traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-results
+          path: |
+            evals/results/
+            traces/
+          retention-days: 14
