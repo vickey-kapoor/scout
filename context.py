@@ -23,8 +23,9 @@ CONTEXT_BETA = "context-management-2025-06-27"
 CACHE_CONTROL = {"type": "ephemeral"}
 
 # Clear old tool results once the prompt passes this many input tokens. A search plus three
-# fetched pages is ~7.5-8k, so this is deliberately low so a learner sees clearing fire.
-# The API default is 100_000 and production values belong near that; at this scale clearing
+# fetched pages is ~7.5-8k, so this is deliberately low. It is only the trigger: clearing fires
+# when the results BEHIND the KEEP_TOOL_USES newest ones add up to CLEAR_AT_LEAST_TOKENS, so
+# expect it on longer runs (re-fetches, a second search), not every run. The API default is 100_000 and production values belong near that; at this scale clearing
 # is context hygiene (the model stops re-reading stale pages), not a cost saving.
 CLEAR_TRIGGER_TOKENS = 8_000
 
