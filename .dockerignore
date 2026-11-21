@@ -16,6 +16,6 @@ infra/
 # SQLite databases (scout.db) hold saved research — keep them out of the image
 *.db
 
-# Local-only agent notes (not in git either)
+# Agent instructions: committed to git, but not needed in the image
 CLAUDE.md
 AGENTS.md
