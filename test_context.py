@@ -27,7 +27,7 @@ def test_request_kwargs_enable_caching_and_clearing():
     assert edits[0] == {
         "type": "clear_tool_uses_20250919",
         "trigger": {"type": "input_tokens", "value": 8_000},
-        "keep": {"type": "tool_uses", "value": 3},
+        "keep": {"type": "tool_uses", "value": 4},
         "clear_at_least": {"type": "input_tokens", "value": 2_000},
     }
 
