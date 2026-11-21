@@ -29,7 +29,7 @@ Never open a PR with failing tests. If a step can't be completed, stop and say w
 
 ## Checks for this repo
 
-- Tests: `python test_evals.py` (grader tests, no API keys needed)
+- Tests: `python test_evals.py && python test_context.py` (grader and context tests, no API keys needed)
 - Build: `python -m py_compile *.py`
 - Lint: none configured yet; say so rather than inventing one
 - Evals: `python evals.py <case ids>` costs real tokens. Locally, run only the cases a change
