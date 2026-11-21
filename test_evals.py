@@ -4,9 +4,10 @@
 #
 #   python test_evals.py
 
+import json, re
 from types import SimpleNamespace
 
-from evals import grade
+from evals import CASES, grade
 
 CASE = {"id": "t", "question": "q", "expect": ["5432"], "domains": ["postgresql.org"],
         "max_steps": 3}
@@ -70,6 +71,34 @@ def test_no_budget_means_no_efficient_check():
 def test_not_found_case_needs_no_source():
     case = {"id": "t", "question": "q", "expect": ["could not find"], "require_source": False}
     assert failed(grade(case, "I could not find any record of that.", run())) == set()
+
+
+def test_cases_file_is_valid():
+    # a typo in cases.jsonl (bad regex, duplicate id, "https://" in a domain) would
+    # silently make a case always fail or always pass, so check the file itself
+    MAX_STEPS = 10   # agent.MAX_STEPS; hardcoded so this test needs no API client
+    ids = set()
+    for n, line in enumerate(CASES.read_text().splitlines(), 1):
+        if not line.strip():
+            continue
+        case = json.loads(line)
+        where = f"line {n} ({case.get('id')})"
+        assert case["id"] not in ids, f"{where}: duplicate id"
+        ids.add(case["id"])
+        assert isinstance(case.get("question"), str) and case["question"].strip(), where
+        assert isinstance(case.get("expect"), list) and case["expect"], where
+        for pattern in case["expect"]:
+            re.compile(pattern)
+        if "max_steps" in case:
+            ms = case["max_steps"]
+            assert isinstance(ms, int) and not isinstance(ms, bool), where
+            assert 1 <= ms <= MAX_STEPS, f"{where}: max_steps {ms} out of range"
+        if "domains" in case:
+            assert isinstance(case["domains"], list), where
+            for d in case["domains"]:
+                assert isinstance(d, str) and "://" not in d and "/" not in d and "." in d, \
+                    f"{where}: domain {d!r} must be a bare hostname"
+    assert ids, "no cases found"
 
 
 if __name__ == "__main__":

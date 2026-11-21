@@ -8,6 +8,10 @@
 #
 # Each run is saved to evals/results/<timestamp>.jsonl, so you can compare
 # before and after a change.
+#
+# Lesson 8 (context management) adds cache metrics. With prompt caching on, "tok in"
+# is only the UNCACHED part of the prompt; "cached" is what was served from the cache.
+# The full prompt size the model saw = tok in + cache-read + cache-write.
 
 import json, os, re, sys, time
 from pathlib import Path
@@ -85,6 +89,10 @@ def run_case(case: dict) -> dict:
         "stop_reason": trace.stop_reason,
         "tokens_in": trace.tokens_in,
         "tokens_out": trace.tokens_out,
+        "cache_read": trace.cache_read,
+        "cache_write": trace.cache_write,
+        "cleared_tokens": trace.cleared_tokens,
+        "context_peak": trace.context_peak,
         "seconds": round(time.time() - t0, 1),
         "error": error,
         "answer": answer,
@@ -99,30 +107,36 @@ def github_summary(results: list[dict]) -> None:
         return
     passed = sum(r["passed"] for r in results)
     lines = [f"## scout evals: {passed}/{len(results)} passed\n",
-             "| case | result | steps | tokens in | tokens out | failed checks |",
-             "|---|---|---|---|---|---|"]
+             "| case | result | steps | tokens in | cache read | tokens out | failed checks |",
+             "|---|---|---|---|---|---|---|"]
     for r in results:
         failed = ", ".join(k for k, ok in r["checks"].items() if not ok) or ""
         if r["error"]:
             failed += f" ({r['error'][:80]})"
         lines.append(f"| {r['id']} | {'✅' if r['passed'] else '❌'} | {r['steps']} | "
-                     f"{r['tokens_in']} | {r['tokens_out']} | {failed} |")
+                     f"{r['tokens_in']} | {r['cache_read']} | {r['tokens_out']} | {failed} |")
     with open(path, "a", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
 
 
 def report(results: list[dict]) -> None:
-    print(f"\n{'case':<20} {'result':<6} {'steps':>5} {'tok in':>7} {'tok out':>7} {'sec':>5}  failed checks")
+    print(f"\n{'case':<20} {'result':<6} {'steps':>5} {'tok in':>7} {'cached':>7} {'tok out':>7} {'sec':>5}  failed checks")
     for r in results:
         failed = [k for k, ok in r["checks"].items() if not ok]
         print(f"{r['id']:<20} {'PASS' if r['passed'] else 'FAIL':<6} {r['steps']:>5} "
-              f"{r['tokens_in']:>7} {r['tokens_out']:>7} {r['seconds']:>5}  "
+              f"{r['tokens_in']:>7} {r['cache_read']:>7} {r['tokens_out']:>7} {r['seconds']:>5}  "
               f"{', '.join(failed) or ''}{'  ' + r['error'] if r['error'] else ''}")
     n = len(results)
     passed = sum(r["passed"] for r in results)
     avg = lambda k: sum(r[k] for r in results) / n
-    print(f"\n{passed}/{n} passed ({passed / n:.0%})  |  avg {avg('steps'):.1f} steps, "
-          f"{avg('tokens_in'):.0f} in / {avg('tokens_out'):.0f} out tokens, {avg('seconds'):.1f}s")
+    line = (f"\n{passed}/{n} passed ({passed / n:.0%})  |  avg {avg('steps'):.1f} steps, "
+            f"{avg('tokens_in'):.0f} in / {avg('cache_read'):.0f} cache-read / "
+            f"{avg('tokens_out'):.0f} out tokens, {avg('seconds'):.1f}s")
+    # runs where old tool results were cleared to keep the context under budget
+    k = sum(r["cleared_tokens"] > 0 for r in results)
+    if k:
+        line += f"  |  context cleared in {k} run(s)"
+    print(line)
 
 
 if __name__ == "__main__":
