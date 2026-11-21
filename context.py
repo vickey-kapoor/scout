@@ -28,9 +28,11 @@ CACHE_CONTROL = {"type": "ephemeral"}
 # is context hygiene (the model stops re-reading stale pages), not a cost saving.
 CLEAR_TRIGGER_TOKENS = 8_000
 
-# Keep the most recent N tool uses intact (the API default). 3 keeps a whole batch of up to
-# three parallel fetches, so the model never loses a page it fetched in its latest step.
-KEEP_TOOL_USES = 3
+# Keep the most recent N tool uses intact (API default: 3). Clearing happens on the request that
+# carries the newest tool results, so N must cover the biggest batch of parallel fetches the
+# model makes in one step, or a page is cleared before the model ever reads it. 4 covers the
+# 4-page db-default-ports case; a larger parallel batch can still lose its oldest page.
+KEEP_TOOL_USES = 4
 
 # Only clear when at least this many tokens are freed (~one fetched page). Clearing rewrites the
 # cache from the cleared point onward, so a tiny clear would cost more in cache writes than it saves.
@@ -72,7 +74,8 @@ def usage_numbers(response) -> dict:
         "cache_read": cache_read,
         "cache_write": cache_write,
         "context_tokens": input_tokens + cache_read + cache_write,
-        # edit types we don't know (e.g. clear_thinking) lack these fields and add 0
+        # cleared_input_tokens is reported by every edit type (clear_thinking too); fields an
+        # unknown future edit type lacks count as 0 instead of crashing
         "cleared_tool_uses": sum(getattr(e, "cleared_tool_uses", 0) or 0 for e in edits),
         "cleared_tokens": sum(getattr(e, "cleared_input_tokens", 0) or 0 for e in edits),
         "edit_types": [getattr(e, "type", "unknown") for e in edits],

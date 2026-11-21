@@ -97,12 +97,12 @@ def test_empty_applied_edits():
 
 
 def test_unknown_edit_type_does_not_crash():
-    edits = [edit("clear_thinking_20251015"),
+    edits = [edit("some_future_edit_type"),          # no cleared_* fields at all
              edit(cleared_tool_uses=1, cleared_input_tokens=2500)]
     n = usage_numbers(response(NS(input_tokens=1, output_tokens=1), edits))
     assert n["cleared_tool_uses"] == 1
     assert n["cleared_tokens"] == 2500
-    assert n["edit_types"] == ["clear_thinking_20251015", "clear_tool_uses_20250919"]
+    assert n["edit_types"] == ["some_future_edit_type", "clear_tool_uses_20250919"]
 
 
 def block(**fields):

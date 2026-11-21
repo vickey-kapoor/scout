@@ -164,7 +164,7 @@ DELETE FROM facts WHERE id = 3;
 ## Evals
 
 An eval is a fixed set of questions checked the same way every time. Without one, "I changed the
-prompt and it seems better" is a feeling. With one, it's `9/11 → 10/11, 4.2 → 3.1 steps`.
+prompt and it seems better" is a feeling. With one, it's `11/13 → 12/13, 4.2 → 3.1 steps`.
 
 ```bash
 python evals.py                       # every case (makes real API calls: costs tokens)
@@ -173,8 +173,8 @@ python evals.py austen moon-landing   # just these cases
 
 ```
 case                 result steps  tok in  cached tok out   sec  failed checks
-python-creator       PASS       3     900    4100    140   9.8
-australia-capital    FAIL       2    3010       0     95   6.1  trusted_domain
+python-creator       PASS       3     450    4100     140   9.8  
+australia-capital    FAIL       2     450       0      95   6.1  trusted_domain
 ...
 11/13 passed (85%)  |  avg 3.1 steps, 900 in / 3200 cache-read / 280 out tokens, 6.0s  |  context cleared in 1 run(s)
 ```
@@ -245,7 +245,7 @@ and can eventually hit the context window.
 You can see it in the trace: each `model_call` event has `context_tokens`, the real prompt size
 for that step. Watch it climb. `run_end` records the biggest value as `context_peak`.
 
-Two tools fix this, and they work together:
+Two techniques fix this, and they work together:
 
 1. **Prompt caching** makes the resent part cheap.
 2. **Clearing old tool results** makes the resent part smaller.
@@ -272,10 +272,11 @@ Verify it with `cache_read` (tokens served from cache) and `cache_write` (tokens
 | Cache read | 0.05x |
 | Cache write (5-minute lifetime) | 1.25x |
 
-The cacheable prefix must be at least 512 tokens, or nothing is cached.
+On Sonnet 5.5 the cacheable prefix must be at least 512 tokens, or nothing is cached.
 
-Honest caveat: step 1 is too short to cache, and a 2-step run pays a write it never reads. So
-very short runs cost slightly **more** with caching on. It pays off from step 3, and the longer
+Honest caveat: every cache write costs 1.25x, and a write pays off only when a later step reads it.
+Step 1 may even be under the 512-token minimum. So a very short run can cost slightly **more**
+with caching on. It pays off from step 3, and the longer
 the run, the more it saves. One more rule: any byte change in the prefix invalidates the cache
 from that point on.
 
@@ -292,7 +293,7 @@ the server, which sees the prompt before the model does. It needs the beta heade
 | Constant | Value | Meaning and why |
 |---|---|---|
 | `CLEAR_TRIGGER_TOKENS` | 8,000 | Start clearing once the prompt passes this many input tokens. The API default is 100,000. It is low here on purpose, so you can watch clearing happen in a short run. |
-| `KEEP_TOOL_USES` | 3 | Keep the 3 most recent tool uses and their results. The model is most likely to need what it just read. |
+| `KEEP_TOOL_USES` | 4 | Keep the 4 most recent tool uses and their results (API default: 3). Clearing happens on the request that carries the newest results, so this must cover the biggest parallel batch, or a page is cleared before the model reads it. 4 covers the 4-page `db-default-ports` case. |
 | `CLEAR_AT_LEAST_TOKENS` | 2,000 | Only clear if at least this many tokens are freed. Clearing changes the prefix, which invalidates the cache from the cleared point on. A tiny clear would throw away the cache to save almost nothing. |
 
 When the API applies an edit, trace.py logs a `context_edit` event with `step`, `edit_types`,
@@ -306,27 +307,30 @@ Things to know:
 - **A cleared page is gone.** The model can no longer re-read it. That is why the system prompt
   now says: "Older tool results may be cleared to save space: after reading a page, state the key
   facts you need from it before fetching more."
-- **Limitation:** if the model fetches more than 3 pages in a single parallel batch, an older one
+- **Limitation:** if the model fetches more than 4 pages in a single parallel batch, the oldest
   can be cleared before the model has read it.
 
 Two eval cases exercise this. `tls-rfcs` (RFC numbers and years for TLS 1.0, 1.2 and 1.3; RFCs
 never change) takes about 3 page fetches and shows cache reads across steps. `db-default-ports`
 (default ports of PostgreSQL, MySQL, Redis and MongoDB from their official docs) takes about 4
-fetches and is designed to cross the clearing trigger.
+fetches, which pushes the prompt past the trigger. Clearing only happens if enough older,
+already-read results pile up behind the 4 kept ones (for example a re-fetch or a second search),
+so expect `context_edit` events in some runs, not all.
 
 ### Why not trim `messages` ourselves?
 
 This is the key idea of the lesson. The obvious way to shrink the context is to edit the list in
 code, for example shortening an old tool result. Don't.
 
-Scout's model (Sonnet 5.5) thinks by default, so every response already contains thinking blocks.
+Scout's model (Sonnet 5.5) runs adaptive thinking by default, so its responses can contain thinking
+blocks.
 The API ties each thinking block to the exact conversation that produced it. If your code edits an
 earlier message, then replaying a later thinking block fails with a 400 error on accounts created
 on or after 31 Aug 2026. On every account, the prompt cache also misses from the edited point
 onward, so you lose the savings from the section above.
 
-Server-side context editing is different. It does not count as an edit, because the check compares
-the conversation **as you sent it**, and you sent it unchanged.
+Server-side context editing is different: it does not count as an edit. Your `messages` list stays
+exactly as you sent it; the API trims its own copy.
 
 The rule: **`messages` is append-only.** Append `response.content` verbatim. Never edit, filter or
 rebuild earlier entries. `test_context.py` enforces this, including a test that the loop resends

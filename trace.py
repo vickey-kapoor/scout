@@ -20,7 +20,7 @@ class Trace:
         self.tools_used: list[str] = []
         self.stop_reason = None        # of the last model call: "end_turn" = finished normally
         self.cache_read = self.cache_write = 0   # prompt tokens read from / written to the cache
-        self.cleared_tokens = 0        # tool-result tokens the API cleared server-side
+        self.cleared_tokens = 0        # input tokens the API cleared server-side (any edit type)
         self.context_peak = 0          # largest full prompt sent (uncached + cache read + write)
         self.log("run_start", question=question)
 
