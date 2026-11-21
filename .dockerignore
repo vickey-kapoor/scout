@@ -8,6 +8,7 @@ traces/
 evals/
 evals.py
 test_evals.py
+test_context.py
 __pycache__/
 *.pyc
 .git/
