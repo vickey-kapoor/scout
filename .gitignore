@@ -13,8 +13,9 @@
 !*.tfvars.example
 crash.log
 
-# Agent run logs
+# Agent run logs and eval results (answers can contain fetched page text)
 traces/
+evals/results/
 
 # Python
 .venv/
